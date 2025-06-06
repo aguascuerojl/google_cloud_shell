@@ -10,10 +10,12 @@ This cheat sheet provides a quick reference for common `gcloud` and other comman
 5.  [Dataproc (Apache Spark/Hadoop)](#5-dataproc-apache-sparkhadoop)
 6.  [Cloud SQL](#6-cloud-sql)
 7.  [Pub/Sub](#7-pubsub)
-8.  [Monitoring & Logging](#8-monitoring--logging)
-9.  [IAM & Permissions](#9-iam--permissions)
-10. [Networking (Basic)](#10-networking-basic)
-11. [Utilities & Troubleshooting](#11-utilities--troubleshooting)
+8.  [Cloud Composer (Apache Airflow)](#8-cloud-composer-apache-airflow)
+9.  [Looker / Looker Studio](#9-looker--looker-studio)
+10. [Monitoring & Logging](#10-monitoring--logging)
+11. [IAM & Permissions](#11-iam--permissions)
+12. [Networking (Basic)](#12-networking-basic)
+13. [Utilities & Troubleshooting](#13-utilities--troubleshooting)
 
 ---
 
@@ -282,13 +284,107 @@ Use `gsutil` for GCS operations.
 
 ---
 
-## 8. Monitoring & Logging
+## 8. Cloud Composer (Apache Airflow)
+
+Cloud Composer instances provide an Apache Airflow environment. `gcloud composer` commands manage the environment itself, while Airflow DAGs are typically deployed to the GCS bucket associated with the environment.
+
+* **Environment Management:**
+    ```bash
+    gcloud composer environments list --region [REGION] # List Composer environments
+    gcloud composer environments describe [ENVIRONMENT_NAME] --region [REGION] # Describe an environment
+    gcloud composer environments create [ENVIRONMENT_NAME] \
+        --location [REGION] \
+        --image-version [COMPOSER_VERSION] \ # e.g., composer-2.8.2-airflow-2.7.2
+        --machine-type [MACHINE_TYPE] \ # e.g., n1-standard-1
+        --node-count [NODE_COUNT] \
+        --disk-size [GB] \
+        --scheduler-count [COUNT] \
+        --web-server-machine-type [MACHINE_TYPE] \
+        --zone [ZONE] # Create a new environment
+    gcloud composer environments stop [ENVIRONMENT_NAME] --region [REGION] # Stop (pause) an environment
+    gcloud composer environments start [ENVIRONMENT_NAME] --region [REGION] # Start (resume) an environment
+    gcloud composer environments delete [ENVIRONMENT_NAME] --region [REGION] # Delete an environment
+    ```
+
+* **DAG Deployment:**
+    * **Get DAGs bucket:**
+        ```bash
+        gcloud composer environments describe [ENVIRONMENT_NAME] \
+            --region [REGION] \
+            --format="value(config.dagGcsPrefix)"
+        # Output will be something like: gs://[BUCKET_NAME]/dags
+        ```
+    * **Upload DAG file to bucket:**
+        ```bash
+        gsutil cp [LOCAL_DAG_FILE.py] gs://[COMPOSER_DAGS_BUCKET]/
+        ```
+
+* **Airflow CLI Commands (via Cloud Shell):**
+    You can run Airflow CLI commands directly on your Composer environment's master VM.
+    ```bash
+    # List DAGs
+    gcloud composer environments run [ENVIRONMENT_NAME] \
+        --location [REGION] dags list
+
+    # Trigger a DAG (useful for testing)
+    gcloud composer environments run [ENVIRONMENT_NAME] \
+        --location [REGION] dags trigger [DAG_ID] --conf '{"key": "value"}'
+
+    # Get task logs (replace DAG_ID, TASK_ID, DAG_RUN_ID)
+    gcloud composer environments run [ENVIRONMENT_NAME] \
+        --location [REGION] tasks logs [DAG_ID] [TASK_ID] [DAG_RUN_ID]
+
+    # Clear task instance (useful for re-running failed tasks)
+    gcloud composer environments run [ENVIRONMENT_NAME] \
+        --location [REGION] tasks clear --yes [DAG_ID] --task-regex '[TASK_ID_REGEX]' --start-date [YYYY-MM-DD] --end-date [YYYY-MM-DD]
+    ```
+
+* **Update Environment Configuration:**
+    ```bash
+    gcloud composer environments update [ENVIRONMENT_NAME] \
+        --location [REGION] \
+        --update-env-variables=KEY=VALUE,ANOTHER_KEY=ANOTHER_VALUE # Update Airflow environment variables
+    gcloud composer environments update [ENVIRONMENT_NAME] \
+        --location [REGION] \
+        --update-pypi-packages-from-file=requirements.txt # Install Python packages
+    ```
+
+---
+
+## 9. Looker / Looker Studio
+
+These tools are primarily web-based, but you might use `gcloud` to manage data sources or permissions that they rely on.
+
+* **Looker Studio (formerly Google Data Studio):**
+    * **No direct `gcloud` CLI commands for Looker Studio dashboards.** Management is entirely through the web UI (`datastudio.google.com`).
+    * **Indirect interaction:** Ensure BigQuery datasets/tables, Cloud SQL instances, or GCS buckets that Looker Studio connects to have appropriate IAM permissions for the service accounts or users Looker Studio uses.
+        * Example: Granting BigQuery Data Viewer role to a service account for Looker Studio.
+            ```bash
+            gcloud projects add-iam-policy-binding [PROJECT_ID] \
+                --member='serviceAccount:[LOOKER_STUDIO_SA_EMAIL]' \
+                --role='roles/bigquery.dataViewer'
+            ```
+
+* **Looker (Enterprise BI Platform):**
+    * **No direct `gcloud` CLI commands for Looker instance configuration or content management.** Looker instances are managed through the Looker Admin UI or specific API calls to the Looker API (not `gcloud`).
+    * **Deployment of Looker (if self-hosted):** If you're managing a self-hosted Looker instance on GCE, you'd use `gcloud compute` commands as above.
+    * **Database Connections:** Data engineers configure database connections within Looker. Ensure the underlying database (e.g., BigQuery, Cloud SQL) has correct network access and IAM permissions for the Looker service account or IP whitelist.
+        * Example: For Cloud SQL private IP connection from Looker:
+            * Ensure Looker's VPC is peered with Cloud SQL's VPC.
+            * Manage firewall rules (`gcloud compute firewall-rules`).
+
+**Key takeaway for Looker/Looker Studio:** Your `gcloud` commands will focus on the *data sources* (BigQuery, Cloud SQL, GCS) and *IAM permissions* that Looker/Looker Studio needs to access them, rather than managing Looker/Looker Studio directly.
+
+---
+
+## 10. Monitoring & Logging
 
 * **Logging (Cloud Logging):**
     ```bash
     gcloud logging logs list # List available logs
     gcloud logging read "resource.type=\"cloud_dataproc_cluster\" AND severity>=ERROR" # Read logs with a filter
     gcloud logging read "resource.type=\"dataflow_step\" AND textPayload:\"ERROR\"" --limit 10 # Read Dataflow errors
+    gcloud logging read "resource.type=\"cloud_composer_environment\" AND severity=WARNING" # Read Composer environment logs
     ```
 
 * **Monitoring (Cloud Monitoring):**
@@ -296,7 +392,7 @@ Use `gsutil` for GCS operations.
 
 ---
 
-## 9. IAM & Permissions
+## 11. IAM & Permissions
 
 * **List Policy/Permissions:**
     ```bash
@@ -316,7 +412,7 @@ Use `gsutil` for GCS operations.
 
 ---
 
-## 10. Networking (Basic)
+## 12. Networking (Basic)
 
 * **VPC Networks:**
     ```bash
@@ -332,7 +428,7 @@ Use `gsutil` for GCS operations.
 
 ---
 
-## 11. Utilities & Troubleshooting
+## 13. Utilities & Troubleshooting
 
 * **SSH to VM (e.g., Dataproc Master):**
     ```bash
